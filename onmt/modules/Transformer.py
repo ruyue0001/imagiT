@@ -299,7 +299,7 @@ class mmTransformerEncoder(EncoderBase):
         for i in range(self.num_layers):
             # out, attn = self.transformer[i](emb, out, mask) # attn 1x49x10
             out, attn = self.transformer[i](out, mask)
-        
+
         input_mm = torch.cat([out, img_proj], dim=1)
         out, attn = self.mmtransformer[i](emb, input_mm, mask)
 
