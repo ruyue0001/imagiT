@@ -97,10 +97,11 @@ class mmTransformerEncoderLayer(nn.Module):
         emb_norm = self.layer_norm(input_mm)
         mid, attn = self.self_attn(input_norm, input_norm, emb_norm, mask=mask)
         out = self.feed_forward(mid + input_mm)
+        #print (input_mm.shape, mid.shape, out.shape)
         return out, attn
 
 
-class TransformerEncoder(EncoderBase):
+class mmTransformerEncoder(EncoderBase):
     """
     The Transformer encoder from "Attention is All You Need".
 
@@ -127,7 +128,7 @@ class TransformerEncoder(EncoderBase):
     """
     def __init__(self, num_layers, hidden_size,
                  dropout, embeddings):
-        super(TransformerEncoder, self).__init__()
+        super(mmTransformerEncoder, self).__init__()
 
         self.num_layers = num_layers
         self.embeddings = embeddings
@@ -186,7 +187,10 @@ class TransformerEncoder(EncoderBase):
         s_len, n_batch, emb_dim = emb.size()
 
         emb = emb.transpose(0, 1).contiguous() # (batch, src_len, nfeat)
+        #print (emb.shape) (128,14,300)
+        #print (img_proj.shape) (128,49,300)
         input_mm = torch.cat([emb, img_proj], dim=1)
+        #print (input_mm.shape) (128,63,300)
         out = input_mm
         # words = input[:, :, 0].transpose(0, 1) # (batch, src_len)
         words = emb[:, :, 0]
@@ -212,7 +216,7 @@ class TransformerEncoder(EncoderBase):
 
         return Variable(input_mm.data), out.transpose(0, 1).contiguous(), attn
 
-class mmTransformerEncoder(EncoderBase):
+class TransformerEncoder(EncoderBase):
     def __init__(self, num_layers, hidden_size,
                  dropout, embeddings):
         super(TransformerEncoder, self).__init__()
@@ -222,7 +226,7 @@ class mmTransformerEncoder(EncoderBase):
         self.transformer = nn.ModuleList(
             [TransformerEncoderLayer(hidden_size, dropout)
              for i in range(num_layers)])
-        self.mmtransformer = mmTransformerEncoderLayer(hidden_size, dropout)
+        #self.mmtransformer = mmTransformerEncoderLayer(hidden_size, dropout)
         self.layer_norm = onmt.modules.BottleLayerNorm(hidden_size)
 
     def forward(self, input, lengths=None, hidden=None):
@@ -232,8 +236,9 @@ class mmTransformerEncoder(EncoderBase):
         emb = self.embeddings(input)
         s_len, n_batch, emb_dim = emb.size()
 
-        out = emb.transpose(0, 1).contiguous()
-        words = input[:, :, 0].transpose(0, 1)
+        emb = emb.transpose(0, 1).contiguous()
+        out = emb
+        words = emb[:, :, 0]
         # CHECKS
         out_batch, out_len, _ = out.size()
         w_batch, w_len = words.size()
@@ -253,59 +258,6 @@ class mmTransformerEncoder(EncoderBase):
 
         return Variable(emb.data), out.transpose(0, 1).contiguous()
 
-    # Mulitimodal Transformer
-    def forward_mm(self, input, img_proj, lengths=None, hidden=None):
-        """
-                Args:
-                    input (:obj:`LongTensor`):
-                       padded sequences of sparse indices `[src_len x batch x nfeat]`
-                    lengths (:obj:`LongTensor`): length of each sequence `[batch]`
-                    hidden (class specific):
-                       initial hidden state.
-
-                Returns:k
-                    (tuple of :obj:`FloatTensor`, :obj:`FloatTensor`):
-                        * final encoder state, used to initialize decoder
-                           `[layers x batch x hidden]`
-                        * contexts for attention, `[src_len x batch x hidden]`
-                """
-        self._check_args(input, lengths, hidden)
-
-        emb = self.embeddings(input)
-        s_len, n_batch, emb_dim = emb.size()
-
-        out = emb.transpose(0, 1).contiguous() # (batch, src_len, nfeat)
-        # input_mm = torch.cat([emb, img_proj], dim=1)
-        # out = input_mm
-        # words = input[:, :, 0].transpose(0, 1) # (batch, src_len)
-        #words = emb[:, :, 0]
-        words = input[:, :, 0].transpose(0, 1)
-        # CHECKS
-        out_batch, out_len, _ = out.size()
-        w_batch, w_len = words.size()
-
-        aeq(out_batch, w_batch)
-        aeq(s_len, w_len)
-        # END CHECKS
-
-        # Make mask. the mask here is no use
-        padding_idx = self.embeddings.word_padding_idx
-        mask = words.data.eq(padding_idx).unsqueeze(1) \
-            .expand(w_batch, out_len, s_len)
-
-        # assert not words.data.eq(padding_idx).max(), "there are some mask items eqaul to 1"
-
-        # Run the forward pass of every layer of the tranformer.
-        for i in range(self.num_layers):
-            # out, attn = self.transformer[i](emb, out, mask) # attn 1x49x10
-            out, attn = self.transformer[i](out, mask)
-
-        input_mm = torch.cat([out, img_proj], dim=1)
-        out, attn = self.mmtransformer[i](emb, input_mm, mask)
-
-        out = self.layer_norm(out)
-
-        return Variable(input_mm.data), out.transpose(0, 1).contiguous(), attn
 
 class TransformerDecoderLayer(nn.Module):
     """
@@ -451,6 +403,7 @@ class TransformerDecoder(nn.Module):
         tgt_words = input[:, :, 0].transpose(0, 1)
         src_batch, src_len = src_words.size()
         tgt_batch, tgt_len = tgt_words.size()
+        # print (src.shape, src_words.shape, input.shape, tgt_words.shape)
         # aeq(input_batch, contxt_batch, src_batch, tgt_batch) train and translate state.src have different shape
         # aeq(contxt_len, src_len)
         # aeq(input_len, tgt_len)

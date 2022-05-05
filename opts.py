@@ -51,7 +51,7 @@ def model_opts(parser):
                        Options are [text|img|audio].""")
 
     group.add_argument('-encoder_type', type=str, default='rnn',
-                       choices=['rnn', 'brnn', 'mean', 'transformer', 'cnn'],
+                       choices=['rnn', 'brnn', 'mean', 'transformer','mmtransformer', 'cnn'],
                        help="""Type of encoder layer to use. Non-RNN layers
                        are experimental. Options are
                        [rnn|brnn|mean|transformer|cnn].""")
@@ -123,7 +123,7 @@ def model_opts(parser):
     group.add_argument('-CAP_learning_rate', type=float, default=0.001)
     group.add_argument('-CAP_cnn_path', type=str, default='model/STREAM/cnn_encoder.ckpt')
     group.add_argument('-CAP_rnn_path', type=str, default='model/STREAM/rnn_dncoder.ckpt')
-    group.add_argument('-branch_num', type=int, default=3)
+    group.add_argument('-branch_num', type=int, default=1)
 
 def preprocess_opts(parser):
     # Data options
@@ -460,14 +460,18 @@ def add_md_help_argument(parser):
 #####################################################################
 
 def train_mm_opts(parser):
-    parser.add_argument('-path_to_raw_imgs', default="/home/yaoshaowei/pycharm/MultimodalNMT/data/flickr30k/images",
+    parser.add_argument('-path_to_raw_imgs', default="multi30K/flickr30k-images",
+                        help="""Path to raw images""")
+    parser.add_argument('-path_to_imglist', default="multi30K/splits",
+                        help="""Path to img list""")
+    parser.add_argument('-path_to_train_img_feats', default='flickr30k_train_resnet50_cnn_features.hdf5',
                         help="""Path to hdf5 file containing training image features""")
-    parser.add_argument('-path_to_imglist', default="/home/yaoshaowei/pycharm/MultimodalNMT/data/raw.stanford/test_images.txt",
-                        help="""Path to hdf5 file containing training image features""")
-    parser.add_argument('-path_to_train_img_feats', required=True,
-                        help="""Path to hdf5 file containing training image features""")
-    parser.add_argument('-path_to_valid_img_feats', required=True,
+    parser.add_argument('-path_to_valid_img_feats', default='flickr30k_valid_resnet50_cnn_features.hdf5',
                         help="""Path to hdf5 file containing validation image features""")
+    parser.add_argument('-path_to_train_img_names', default='flickr30k_train_image_name.hdf5',
+                        help="""path to train img names""")
+    parser.add_argument('-path_to_valid_img_names', default='flickr30k_valid_image_name.hdf5',
+                        help="""path to valid img names""")
     parser.add_argument('-dropout_imgs', type=float, default=0.5,
                         help="Dropout probability applied to image features.")
     parser.add_argument('-use_nonlinear_projection', action='store_true',
@@ -482,13 +486,15 @@ def train_mm_opts(parser):
     #                    help='Type of multimodal decoder layer to use.')
 
 def translate_mm_opts(parser):
-    parser.add_argument('-path_to_test_img_feats', required=True,
+    parser.add_argument('-path_to_test_img_feats', default='flickr30k_test_resnet50_cnn_features.hdf5',
                         help="""Path to hdf5 file containing test image features""")
-    parser.add_argument('-path_to_raw_imgs', default="data/flickr30k/images",
-                        help="""Path to hdf5 file containing training image features""")
+    parser.add_argument('-path_to_test_img_names', default='flickr30k_test_image_name.hdf5',
+                        help="path to test img names")
+    parser.add_argument('-path_to_raw_imgs', default="multi30K/flickr30k-images",
+                        help="""Path to raw images""")
     parser.add_argument('-path_to_imglist',
-                        default="./data/raw/test_images.txt",
-                        help="Path to hdf5 file containing training image features")
+                        default="multi30K/splits",
+                        help="Path to img list")
 
 
 

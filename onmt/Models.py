@@ -5,6 +5,8 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence as pack
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
+from PIL import Image
+import torchvision.transforms as transforms
 
 import onmt
 from onmt.Utils import aeq
@@ -690,8 +692,8 @@ class ImageLocalFeaturesProjector(nn.Module):
         """
         Args:
             num_layers (int): 1.
-            nfeats (int): size of image features.
-            outdim (int): size of the output dimension.
+            nfeats (int): size of image features. 2048
+            outdim (int): size of the output dimension. 300
             dropout (float): dropout probablity.
             use_nonliner_projection (bool): use non-linear activation
                     when projecting the image features or not.
@@ -705,7 +707,7 @@ class ImageLocalFeaturesProjector(nn.Module):
         
         layers = []
         # reshape input
-        layers.append( View(-1, 7*7, nfeats) )
+        layers.append( View(-1, 4*4, nfeats) )
         # linear projection from feats to rnn size
         layers.append( nn.Linear(nfeats, outdim*num_layers) )
         if use_nonlinear_projection:
@@ -715,6 +717,7 @@ class ImageLocalFeaturesProjector(nn.Module):
         self.layers = nn.Sequential(*layers)
 
     def forward(self, input):
+        # [128, 100352]
         out = self.layers(input)
         #print( "out.size(): ", out.size() )
         #if self.num_layers>1:
@@ -723,6 +726,21 @@ class ImageLocalFeaturesProjector(nn.Module):
         #    #print( "out.size(): ", out.size() )
         return out
 
+class FakeImageLocalFeaturesProjector(nn.Module):
+    def __init__(self, nfeats, outdim, dropout, use_nonlinear_projection):
+        super(FakeImageLocalFeaturesProjector, self).__init__()
+        self.nfeats = nfeats
+        self.dropout = dropout
+        layers = []
+        layers.append(nn.Linear(nfeats, outdim))
+        if use_nonlinear_projection:
+            layers.append( nn.Tanh() )
+        layers.append( nn.Dropout(dropout) )
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, input):
+        out = self.layers(input)
+        return out
 
 class RNNEncoderImageAsWord(EncoderBase):
     """ The RNN encoder that uses image features as words. """
@@ -1520,7 +1538,7 @@ class GraphTransformer(nn.Module):
         # 在这里 把img_proj加到transformer里
         input_mm, context, _ = self.encoder.forward_mm(src, img_proj, lengths)
         #print (input_mm.shape, context.shape)
-
+        #[128, length+49, 300], [length+49, 128, 300]
         # project/transform local image features into the expected structure/shape
         # here context and enc_hidden doesnt be used
         # img+src is our input
@@ -1546,18 +1564,29 @@ class GANTransformer(nn.Module):
       decoder (:obj:`RNNDecoderBase`): a decoder object
       multi<gpu (bool): setup for multigpu support
     """
-    def __init__(self, encoder, decoder, encoder_images, caption_cnn, caption_rnn, netG, netsD, multigpu=False):
+    def __init__(self, encoder, mmTransformerEncoder, decoder, netG, netsD, cnn_model, encoder_images, caption_cnn = None, caption_rnn = None, multigpu=False):
         self.multigpu = multigpu
         super(GANTransformer, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
+        self.mm_encoder = mmTransformerEncoder
+        self.cnn_model = cnn_model
         self.encoder_images = encoder_images
         self.caption_cnn = caption_cnn
         self.caption_rnn = caption_rnn
         self.netG = netG
         self.netsD = netsD
+        self.layer_norm = onmt.modules.BottleLayerNorm(300)
+        # self.imsize = 64 * (2 ** 2)
+        # self.image_transform = transforms.Compose([
+        #     transforms.Scale(int(self.imsize * 76 / 64)),
+        #     transforms.RandomCrop(self.imsize),
+        #     transforms.RandomHorizontalFlip()])
+        # self.norm = transforms.Compose([
+        #     transforms.ToTensor(),
+        #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-    def forward(self, src, tgt, lengths, img_feats, dec_state=None):
+    def forward(self, src, tgt, lengths, noise, dec_state=None):
         """Forward propagate a `src`, `img_feats` and `tgt` tuple for training.
         Possible initialized with a beginning decoder state.
 
@@ -1580,19 +1609,57 @@ class GANTransformer(nn.Module):
                  * final decoder state
         """
         tgt = tgt[:-1]  # exclude last target from inputs
-        img_proj = self.encoder_images( img_feats ) # (128, 49, 300)
+        #img_proj = self.encoder_images( img_feats ) # (128, 49, 300)
         #print(src.shape, tgt.shape, lengths.shape, img_feats.shape, img_proj.shape)
         #
 
-        # 在这里 把img_proj加到transformer里
-        input_mm, context, _ = self.encoder.forward_mm(src, img_proj, lengths)
-        #print (input_mm.shape, context.shape)
+        input, context = self.encoder.forward(src, lengths)
+        #print (input.shape, context.shape)
+        #[128, length, 300],[length, 128, 300]
 
-        # project/transform local image features into the expected structure/shape
-        # here context and enc_hidden doesnt be used
-        # img+src is our input
-        enc_state = self.decoder.init_decoder_state(input_mm.transpose(0, 1), context, enc_hidden=None)
-        out, dec_state, attns = self.decoder(tgt, context,
+        words_embs = context.permute(1, 2, 0).contiguous()
+        sent_emb = torch.mean(words_embs, dim=2)
+
+        fake_imgs, _, mu, logvar = self.netG(noise, sent_emb, words_embs, mask=None)
+
+        img1 = fake_imgs[0]
+        img2 = fake_imgs[1]
+        #print (img1.shape, img2.shape)
+        #[128,3,64,64], [128,3,128,128]
+
+        local_features = self.cnn_model.features(img2)
+        #print (local_features.shape)
+        #[128,2048,4,4]
+
+        local_features = local_features.permute(0,3,2,1).reshape(-1,4*4,2048)
+
+        img_proj = self.encoder_images(local_features)
+        #print (img_proj.shape)
+        #[128,16,300]
+
+        # multimodal transformer layer
+        emb = context.transpose(0,1).contiguous()
+        input_mm = torch.cat([emb, img_proj], dim=1)
+        #print (embs.shape, input_mm.shape)
+        out_mm = input_mm
+        words = emb[:, :, 0]
+        s_len = emb.shape[1]
+        out_batch, out_len, _ = out_mm.size()
+        w_batch, w_len = words.size()
+
+        aeq(out_batch, w_batch)
+        aeq(s_len, w_len)
+
+        padding_idx = self.encoder.embeddings.word_padding_idx
+        mask = words.data.eq(padding_idx).unsqueeze(1) \
+            .expand(w_batch, out_len, s_len)
+
+        out, attn = self.mm_encoder(emb, out_mm, mask)
+        mm_context = self.layer_norm(out).transpose(0, 1).contiguous()
+        print (mm_context.shape)
+
+        enc_state = self.decoder.init_decoder_state(input_mm.transpose(0, 1), mm_context, enc_hidden=None)
+        out, dec_state, attns = self.decoder(tgt, mm_context,
                                              enc_state if dec_state is None
                                              else dec_state,
                                              context_lengths=lengths)
@@ -1600,7 +1667,7 @@ class GANTransformer(nn.Module):
             # Not yet supported on multi-gpu
             dec_state = None
             attns = None
-        return context, out, attns, dec_state
+        return fake_imgs, out, attns, dec_state
 
 
 class RNNDecoderStateDoublyAttentive(DecoderState):

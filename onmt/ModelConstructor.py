@@ -12,19 +12,23 @@ import onmt.modules
 from onmt.Models import NMTModel, MeanEncoder, RNNEncoder, \
                         StdRNNDecoder, InputFeedRNNDecoder
 from onmt.modules import Embeddings, ImageEncoder, CopyGenerator, \
-                         TransformerEncoder, TransformerDecoder, \
+                         TransformerEncoder, mmTransformerEncoder, TransformerDecoder, mmTransformerEncoderLayer,\
                          CNNEncoder, CNNDecoder, AudioEncoder
 from onmt.Utils import use_gpu
 
 # additional imports for multi-modal NMT
 from onmt.Models import ImageGlobalFeaturesProjector, \
                         ImageLocalFeaturesProjector, \
+                        FakeImageLocalFeaturesProjector, \
                         StdRNNDecoderDoublyAttentive, \
                         InputFeedRNNDecoderDoublyAttentive, \
                         NMTImgDModel, NMTImgEModel, NMTImgWModel, \
                         NMTSrcImgModel, RNNEncoderImageAsWord, GraphTransformer, GANTransformer
 #from onmt.GAN import G_DCGAN, G_NET, CNN_ENCODER, CAPTION_CNN, CAPTION_RNN
 from onmt.GAN import CNN_ENCODER, CAPTION_CNN, CAPTION_RNN
+
+import pretrainedmodels
+import pretrainedmodels.utils
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -86,6 +90,9 @@ def make_encoder(opt, embeddings):
     """
     if opt.encoder_type == "transformer":
         return TransformerEncoder(opt.enc_layers, opt.rnn_size,
+                                  opt.dropout, embeddings)
+    elif opt.encoder_type == "mmtransformer":
+        return mmTransformerEncoder(opt.enc_layers, opt.rnn_size,
                                   opt.dropout, embeddings)
     elif opt.encoder_type == "cnn":
         return CNNEncoder(opt.enc_layers, opt.rnn_size,
@@ -455,34 +462,40 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
                                model_opt.window_size)
 
     # Image CNN Encoder
-    image_encoder = CNN_ENCODER (model_opt.rnn_size)
-    img_encoder_path = model_opt.NET_E
+    cnn_model_name = 'resnet50'
+    cnn_model = pretrainedmodels.__dict__[cnn_model_name](num_classes=1000, pretrained='imagenet')
+    cnn_model.last_linear = pretrainedmodels.utils.Identity()
+    for p in cnn_model.parameters():
+        p.requires_grad = False
+    cnn_model.eval()
+    # image_encoder = CNN_ENCODER (model_opt.rnn_size)
+    #img_encoder_path = model_opt.NET_E
     #state_dict = \
     #    torch.load(img_encoder_path, map_location=lambda storage, loc: storage)
     #image_encoder.load_state_dict(state_dict)
-    for p in image_encoder.parameters():
-        p.requires_grad = False
-    print('Load image encoder from:', img_encoder_path)
-    image_encoder.eval()
+    #for p in image_encoder.parameters():
+    #    p.requires_grad = False
+    #print('Load image encoder from:', img_encoder_path)
+    #image_encoder.eval()
 
     # Caption models
-    caption_cnn = CAPTION_CNN(model_opt.CAP_embed_size)
-    caption_cnn.load_state_dict(torch.load(model_opt.CAP_cnn_path, map_location=lambda storage, loc: storage))
-    for p in caption_cnn.parameters():
-        p.requires_grad = False
-    print('Load caption model from:', model_opt.CAP_cnn_path)
-    caption_cnn.eval()
-
-    caption_rnn = CAPTION_RNN(model_opt.CAP_embed_size, model_opt.CAP_hidden_size * 2, len(src_dict), model_opt.CAP_num_layers)
+    # caption_cnn = CAPTION_CNN(model_opt.CAP_embed_size)
+    # caption_cnn.load_state_dict(torch.load(model_opt.CAP_cnn_path, map_location=lambda storage, loc: storage))
+    # for p in caption_cnn.parameters():
+    #     p.requires_grad = False
+    # print('Load caption model from:', model_opt.CAP_cnn_path)
+    # caption_cnn.eval()
+    #
+    # caption_rnn = CAPTION_RNN(model_opt.CAP_embed_size, model_opt.CAP_hidden_size * 2, len(src_dict), model_opt.CAP_num_layers)
     # caption_rnn.load_state_dict(torch.load(cfg.CAP.caption_rnn_path, map_location=lambda storage, loc: storage))
-    for p in caption_rnn.parameters():
-        p.requires_grad = False
-    print('Load caption model from:', model_opt.CAP_rnn_path)
+    # for p in caption_rnn.parameters():
+    #     p.requires_grad = False
+    # print('Load caption model from:', model_opt.CAP_rnn_path)
 
     # Generator and Discriminator
     from onmt.GAN import G_NET, D_NET64, D_NET128, D_NET256
     netG = G_NET(BRANCH_NUM=model_opt.branch_num)
-    print (netG)
+    #print (netG)
     netsD = []
     if model_opt.branch_num > 0:
         netsD.append(D_NET64())
@@ -514,33 +527,36 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
 
     decoder = make_decoder(model_opt, tgt_embeddings)
 
-    if model_opt.multimodal_model_type in ['src+img', 'graphtransformer', 'gantransformer']:
-        # use the local image features "as is": encoder only reshapes them
-        encoder_image = make_encoder_image_local_features(model_opt)
-    else:
-        # transform global image features before using them
-        encoder_image = make_encoder_image_global_features(model_opt)
+    encoder_image = make_encoder_fake_image_local_features(model_opt)
+    # if model_opt.multimodal_model_type in ['src+img', 'graphtransformer']:
+    #     # use the local image features "as is": encoder only reshapes them
+    #     encoder_image = make_encoder_image_local_features(model_opt)
+    # else:
+    #     # transform global image features before using them
+    #     encoder_image = make_encoder_image_global_features(model_opt)
 
     # Make NMTModel(= encoder + decoder).
     #model = NMTModel(encoder, decoder)
     #model.model_type = model_opt.model_type
-    if model_opt.multimodal_model_type == 'imgd':
-        model = NMTImgDModel(encoder, decoder, encoder_image)
-    elif model_opt.multimodal_model_type == 'imge':
-        model = NMTImgEModel(encoder, decoder, encoder_image)
-    elif model_opt.multimodal_model_type == 'imgw':
-        model = NMTImgWModel(encoder, decoder, encoder_image)
-    elif model_opt.multimodal_model_type == 'src+img':
-        # using image encoder only to reshape local features
-        model = NMTSrcImgModel(encoder, decoder, encoder_image)
-    elif model_opt.multimodal_model_type == 'graphtransformer':
-        # using image encoder only to reshape local features
-        model = GraphTransformer(encoder, decoder, encoder_image)
-    elif model_opt.multimodal_model_type == 'gantransformer':
-        model = GANTransformer(encoder, decoder, encoder_image, caption_cnn, caption_rnn, netG, netsD)
+    # if model_opt.multimodal_model_type == 'imgd':
+    #     model = NMTImgDModel(encoder, decoder, encoder_image)
+    # elif model_opt.multimodal_model_type == 'imge':
+    #     model = NMTImgEModel(encoder, decoder, encoder_image)
+    # elif model_opt.multimodal_model_type == 'imgw':
+    #     model = NMTImgWModel(encoder, decoder, encoder_image)
+    # elif model_opt.multimodal_model_type == 'src+img':
+    #     # using image encoder only to reshape local features
+    #     model = NMTSrcImgModel(encoder, decoder, encoder_image)
+    # elif model_opt.multimodal_model_type == 'graphtransformer':
+    #     # using image encoder only to reshape local features
+    #     model = GraphTransformer(encoder, decoder, encoder_image)
+
+    if model_opt.multimodal_model_type == 'gantransformer':
+        mmTransformerEncoder = mmTransformerEncoderLayer(model_opt.rnn_size, model_opt.dropout)
+        model = GANTransformer(encoder, mmTransformerEncoder, decoder, netG, netsD, cnn_model, encoder_image)
     else:
         raise Exception("Multi-modal model type not yet implemented: %s"%(
-                        opt.multimodal_model_type))
+                        model_opt.multimodal_model_type))
 
     model.model_type = model_opt.model_type
 
@@ -563,7 +579,13 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
     else:
         if model_opt.param_init != 0.0:
             print('Initializing model parameters.')
-            for p in model.parameters():
+            for p in model.encoder.parameters():
+                p.data.uniform_(-model_opt.param_init, model_opt.param_init)
+            for p in model.decoder.parameters():
+                p.data.uniform_(-model_opt.param_init, model_opt.param_init)
+            for p in model.mm_encoder.parameters():
+                p.data.uniform_(-model_opt.param_init, model_opt.param_init)
+            for p in model.encoder_images.parameters():
                 p.data.uniform_(-model_opt.param_init, model_opt.param_init)
             for p in generator.parameters():
                 p.data.uniform_(-model_opt.param_init, model_opt.param_init)
@@ -580,9 +602,8 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
     # Make the whole model leverage GPU if indicated to do so.
     if gpu:
         model.cuda()
-        if model_opt.multimodal_model_type == 'gantransformer':
-            for i in range(len(model.netsD)):
-                netsD[i].cuda()
+        for i in range(len(model.netsD)):
+            model.netsD[i].cuda()
     else:
         model.cpu()
 
@@ -631,3 +652,6 @@ def make_encoder_image_local_features(opt):
     return ImageLocalFeaturesProjector(num_layers, feat_size, opt.rnn_size,
             opt.dropout_imgs, opt.use_nonlinear_projection)
 
+def make_encoder_fake_image_local_features(opt):
+    feat_size = 2048
+    return FakeImageLocalFeaturesProjector(feat_size, opt.rnn_size, opt.dropout_imgs, opt.use_nonlinear_projection)
