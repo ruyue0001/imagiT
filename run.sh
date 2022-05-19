@@ -12,20 +12,21 @@ DATA_PATH=data/
 
 echo ${MODEL_PATH}/${MODEL_SNAPSHOT}
 
- python train_mm.py -data ${DATA_PATH} -save_model ${MODEL_PATH} \
- -path_to_train_img_feats ${DATA_PATH}/flickr30k_train_resnet50_cnn_features.hdf5 \
- -path_to_valid_img_feats ${DATA_PATH}/flickr30k/features/flickr30k_valid_resnet50_cnn_features.hdf5 \
- -gpuid 0 -epochs 200 -layers 6 -rnn_size 300 -word_vec_size 512 \
- -encoder_type transformer -decoder_type transformer -position_encoding \
- -max_generator_batches 2 -dropout 0.1 \
- -batch_size 128 -accum_count 1 -use_both \
- -optim adam -adam_beta2 0.998 -decay_method noam -warmup_steps 8000 -learning_rate 2 \
- -max_grad_norm 0 -param_init 0 \
- -label_smoothing 0.1 --multimodal_model_type graphtransformer \
- -pre_word_vecs_enc ${DATA_PATH}/embeddings.enc.pt \
- -pre_word_vecs_dec ${DATA_PATH}/embeddings.dec.pt \
- -branch_num 2
+# python train_mm.py -data ${DATA_PATH} -save_model ${MODEL_PATH} \
+# -path_to_train_img_feats ${DATA_PATH}/flickr30k_train_resnet50_cnn_features.hdf5 \
+# -path_to_valid_img_feats ${DATA_PATH}/flickr30k/features/flickr30k_valid_resnet50_cnn_features.hdf5 \
+# -gpuid 0 -epochs 200 -layers 6 -rnn_size 300 -word_vec_size 512 \
+# -encoder_type transformer -decoder_type transformer -position_encoding \
+# -max_generator_batches 2 -dropout 0.1 \
+# -batch_size 128 -accum_count 1 -use_both \
+# -optim adam -adam_beta2 0.998 -decay_method noam -warmup_steps 8000 -learning_rate 2 \
+# -max_grad_norm 0 -param_init 0 \
+# -label_smoothing 0.1 --multimodal_model_type graphtransformer \
+# -pre_word_vecs_enc ${DATA_PATH}/embeddings.enc.pt \
+# -pre_word_vecs_dec ${DATA_PATH}/embeddings.dec.pt \
+# -branch_num 2
 
+python train_mm_gan.py -data multi30K/m30k -save_model model/ADAM -path_to_train_img_feats flickr30k_train_resnet50_cnn_features.hdf5 -path_to_valid_img_feats flickr30k_test_resnet50_cnn_features.hdf5 -gpuid 0 -epochs 200 -layers 6 -rnn_size 300 -word_vec_size 512 -encoder_type transformer -decoder_type transformer -position_encoding -max_generator_batches 2 -dropout 0.1 -batch_size 128 -accum_count 1 -use_both -optim adam -adam_beta2 0.998 -decay_method noam -warmup_steps 8000 -learning_rate 2 -max_grad_norm 0 -param_init 0 -label_smoothing 0.1 --multimodal_model_type gantransformer -pre_word_vecs_enc multi30K/embeddings.enc.pt -pre_word_vecs_dec multi30K/embeddings.dec.pt -branch_num 2
 
 # -train_from ${MODEL_PATH}/${MODEL_SNAPSHOT} \
 

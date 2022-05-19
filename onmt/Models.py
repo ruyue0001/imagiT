@@ -1656,7 +1656,7 @@ class GANTransformer(nn.Module):
 
         out, attn = self.mm_encoder(emb, out_mm, mask)
         mm_context = self.layer_norm(out).transpose(0, 1).contiguous()
-        print (mm_context.shape)
+        #print (mm_context.shape)
 
         enc_state = self.decoder.init_decoder_state(input_mm.transpose(0, 1), mm_context, enc_hidden=None)
         out, dec_state, attns = self.decoder(tgt, mm_context,
@@ -1667,7 +1667,7 @@ class GANTransformer(nn.Module):
             # Not yet supported on multi-gpu
             dec_state = None
             attns = None
-        return fake_imgs, out, attns, dec_state
+        return context, mu, logvar, fake_imgs, out, attns, dec_state
 
 
 class RNNDecoderStateDoublyAttentive(DecoderState):

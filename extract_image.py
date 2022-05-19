@@ -241,5 +241,5 @@ if __name__ == "__main__":
                 valid_splits)
     arguments.splits = splits
 
-    make_dataset(arguments)
-    #test_dataset()
+    #make_dataset(arguments)
+    test_dataset()

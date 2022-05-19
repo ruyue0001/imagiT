@@ -20,6 +20,9 @@ import onmt
 import onmt.io
 import onmt.modules
 
+from PIL import Image
+import torchvision.transforms as transforms
+
 from onmt.Trainer import Statistics
 from onmt.Loss import generator_loss, discriminator_loss, KL_loss
 
@@ -357,6 +360,14 @@ class TrainerMultimodalGAN(object):
         self.train_img_names = train_img_names
         self.valid_img_names = valid_img_names
         self.multimodal_model_type = multimodal_model_type
+        self.imsize = 64 * (2 ** 2)
+        self.image_transform = transforms.Compose([
+            transforms.Scale(int(self.imsize * 76 / 64)),
+            transforms.RandomCrop(self.imsize),
+            transforms.RandomHorizontalFlip()])
+        self.norm = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
         assert(not self.train_img_names is None), \
                 'Must provide training image names!'
@@ -537,6 +548,26 @@ class TrainerMultimodalGAN(object):
             # load image features for this minibatch into a pytorch Variable
             img_names = self.train_img_names[idxs]
             #print (img_names)
+            imgs = []
+            tmp_64 = []
+            tmp_128 = []
+            for name in img_names:
+                img = Image.open(name).convert('RGB')
+                img = self.image_transform(img)
+                re_img_64 = transforms.Scale(64)(img)
+                re_img_128 = transforms.Scale(128)(img)
+                re_norm_img_64 = self.norm(re_img_64)
+                re_norm_img_128 = self.norm(re_img_128)
+                re_norm_img_64 = re_norm_img_64.unsqueeze(0)
+                re_norm_img_128 = re_norm_img_128.unsqueeze(0)
+                tmp_64.append(re_norm_img_64)
+                tmp_128.append(re_norm_img_128)
+            tmp_64 = torch.cat(tmp_64, dim=0)
+            tmp_64 = tmp_64.cuda()
+            imgs.append(tmp_64)
+            tmp_128 = torch.cat(tmp_128, dim=0)
+            tmp_128 = tmp_128.cuda()
+            imgs.append(tmp_128)
 
             target_size = batch.tgt.size(0)
             # Truncated BPTT
@@ -569,8 +600,11 @@ class TrainerMultimodalGAN(object):
                     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
                     noise.data.normal_(0, 1)
 
-                    fake_imgs, outputs, attns, dec_state = \
-                        self.model(src, tgt, src_lengths, noise, dec_state)
+                    self.model.netG.zero_grad()
+
+                    context, mu, logvar, fake_imgs, outputs, attns, dec_state = self.model(src, tgt, src_lengths, noise, dec_state)
+
+                    context_ = context.detach()
                 else:
                     raise Exception("Multimodal model type not yet supported: %s"%(
                             self.multimodal_model_type))
@@ -580,6 +614,8 @@ class TrainerMultimodalGAN(object):
                         batch, outputs, attns, j,
                         trunc_size, self.shard_size, normalization)
 
+
+                # 4. compute netG and netD loss
                 if self.multimodal_model_type == 'gantransformer':
                     '''
                         src: [s_length, batch_size, 1]
@@ -589,38 +625,38 @@ class TrainerMultimodalGAN(object):
                         sent_emb: [batch, emb_dim]
                         mask: [batch, length]
                     '''
-
-                    context.detach_()
                     optimizerG, optimizersD = self.define_optimizers(self.model.netG, self.model.netsD)
                     # batch_size = context.shape[1]
                     # nz = 100
                     # noise = Variable(torch.FloatTensor(batch_size, nz))
                     # fixed_noise = Variable(torch.FloatTensor(batch_size, nz).normal_(0, 1))
                     # noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
-                    # words_embs = context.permute(1,2,0)
-                    # sent_emb = torch.mean(words_embs, dim=2)
+                    words_embs = context_.permute(1,2,0).contiguous()
+                    sent_emb = torch.mean(words_embs, dim=2)
                     #print (words_embs.shape, sent_emb.shape)
 
-                    # mask = 0
-                    #
                     # noise.data.normal_(0, 1)
-                    # fake_imgs, _, mu, logvar = self.model.netG(noise, sent_emb, words_embs, mask)
+                    fake_imgs, _, mu, logvar = self.model.netG(noise, sent_emb, words_embs, mask=None)
                     #print (fake_imgs[0].shape)  #[128, 3, 64, 64]
 
+                    #update netD
                     errD_total = 0
                     D_logs = ''
                     real_labels = torch.ones(batch_size).cuda()
                     fake_labels = torch.zeros(batch_size).cuda()
                     for i in range(len(self.model.netsD)):
                         self.model.netsD[i].zero_grad()
-                        errD = discriminator_loss(self.model.netsD[i], fake_imgs[i].detach(), fake_imgs[i], sent_emb, real_labels, fake_labels)
-                        errD.backward(retain_graph=True)
+
+                        #print(imgs[i].shape, fake_imgs[i].shape, sent_emb.shape)
+
+                        errD = discriminator_loss(self.model.netsD[i], imgs[i], fake_imgs[i].detach(), sent_emb, real_labels, fake_labels)
+                        errD.backward()
                         optimizersD[i].step()
                         errD_total += errD
                         D_logs += 'errD%d: %.2f ' % (i, errD.item())
                         #print (errD_total)
 
-                    self.model.netG.zero_grad()
+                    # self.model.netG.zero_grad()
                     errG_total, G_logs = generator_loss(netsD=self.model.netsD, image_encoder=0, caption_cnn=self.model.caption_cnn, caption_rnn=self.model.caption_rnn, captions=src, fake_imgs=fake_imgs, real_labels=real_labels, words_embs=words_embs, sent_emb=sent_emb, match_labels=0, cap_lens=src_lengths, class_ids=0)
                     #print (errG_total)
                     kl_loss = KL_loss(mu, logvar)
@@ -628,7 +664,7 @@ class TrainerMultimodalGAN(object):
                     G_logs += 'kl_loss: %.2f ' % kl_loss.item()
                     # backward and update parameters
                     errG_total.backward()
-                    optimizerG.step()
+                    #optimizerG.step()
 
 
                 # 4. Update the parameters and statistics.
