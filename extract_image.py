@@ -108,6 +108,15 @@ def store_image_name(image_list, split, dataset_name):
     hdf5_file.close()
 
 
+def store_images(images, split, dataset_name):
+    img_64_save_path = "%s_%s_%s" % (dataset_name, split, "images_64.npy")
+    img_128_save_path = "%s_%s_%s" % (dataset_name, split, "images_128.npy")
+
+    imgs_64 = [i[0].numpy() for i in images]
+    imgs_128 = [i[1].numpy() for i in images]
+
+    np.save(img_64_save_path, imgs_64, allow_pickle=True)
+    np.save(img_128_save_path, imgs_128, allow_pickle=True)
 
 
 def load_fnames_into_dict(fh, split, path_to_images):
@@ -129,6 +138,41 @@ def load_fnames_into_dict(fh, split, path_to_images):
     print("%s: collected %d images"%(split, len(data['files'])))
     return data
 
+def load_imgs_into_dict(fh, split, path_to_images):
+    data = dict()
+    data['files'] = []
+
+    num = 0
+
+    for img in fh:
+        img_path = "%s/%s" % (path_to_images, img.strip())
+        imsize = 64 * (2 ** 2)
+        image_transform = transforms.Compose([
+            transforms.Scale(int(imsize * 76 / 64)),
+            transforms.RandomCrop(imsize),
+            transforms.RandomHorizontalFlip()])
+        norm = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        img = Image.open(img_path).convert('RGB')
+        img = image_transform(img)
+        re_img_64 = transforms.Scale(64)(img)
+        re_img_128 = transforms.Scale(128)(img)
+        re_norm_img_64 = norm(re_img_64)
+        re_norm_img_128 = norm(re_img_128)
+        re_norm_img_64 = re_norm_img_64.unsqueeze(0)
+        re_norm_img_128 = re_norm_img_128.unsqueeze(0)
+        imgs = [re_norm_img_64, re_norm_img_128]
+
+        data['files'].append(imgs)
+        num += 1
+        # if num == 1:
+        #     print (img_path)
+        #     print (re_norm_img_64)
+        #     return data
+
+    print("%s: collected %d images" % (split, len(data['files'])))
+    return data
 
 def build_pretrained_cnn(pretrained_cnn_name):
     """ Uses pytorch/cadene to load pre-trained CNN. """
@@ -144,20 +188,23 @@ def make_dataset(args):
     data = dict()
     if 'train' in args.splits:
         with open(args.train_fnames, 'r') as fh:
-            data['train'] = load_fnames_into_dict(fh, 'train', args.images_path)
-
+            data['train'] = load_imgs_into_dict(fh, 'train', args.images_path)
+            # print (data['train']['files'][0][0])
+            # return
     if 'valid' in args.splits:
         with open(args.valid_fnames, 'r') as fh:
-            data['valid'] = load_fnames_into_dict(fh, 'valid', args.images_path)
+            data['valid'] = load_imgs_into_dict(fh, 'valid', args.images_path)
 
     if 'test' in args.splits:
         with open(args.test_fnames, 'r') as fh:
-            data['test'] = load_fnames_into_dict(fh, 'test', args.images_path)
-    for split in data:
+            data['test'] = load_imgs_into_dict(fh, 'test', args.images_path)
+    for split in args.splits:
         #files = ['%s/%s' % (args.images_path, x) for x in data[split]['files']]
         files = data[split]['files']
         #get_cnn_features(files, split, args.batch_size, args.dataset_name, cnn, args.pretrained_cnn)
-        store_image_name(files, split, args.dataset_name)
+        #print (files[0][0], files[0][1])
+        #print(files[0][0].shape, files[0][1].shape)
+        store_images(files, split, args.dataset_name)
 
     print("Finished!")
 
@@ -212,22 +259,19 @@ if __name__ == "__main__":
     #                     help="Minibatch size for processing images")
     parser.add_argument("--images_path", type=str,
                         help="Path to the directory containing the images",
-                        default="/home/icalixto/resources/multi30k/images")
+                        default="multi30K/flickr30k-images")
     # parser.add_argument("--pretrained_cnn", type=str, required=True,
     #                     choices=['resnet50','resnet101','resnet152','fbresnet152','vgg19','vgg19_bn'],
     #                     help="""Name of the pre-trained CNN model available in
     #                     https://github.com/Cadene/pretrained-models.pytorch""")
     parser.add_argument("--train_fnames", type=str,
-                        default="/home/icalixto/tools/"+
-                                "lium-cvc-wmt17-mmt/data/train_images.txt",
+                        default="multi30K/splits/train_images.txt",
                         help="""File containing a list with training image file names.""")
     parser.add_argument("--valid_fnames", type=str,
-                        default="/home/icalixto/tools/"+
-                                "lium-cvc-wmt17-mmt/data/val_images.txt",
+                        default="multi30K/splits/val_images.txt",
                         help="""File containing a list with validation image file names.""")
     parser.add_argument("--test_fnames", type=str,
-                        default="/home/icalixto/tools/"+
-                                "lium-cvc-wmt17-mmt/data/test2016_images.txt",
+                        default="multi30K/splits/test_images.txt",
                         help="""File containing a list with test image file names.""")
     # parser.add_argument("--gpuid", type=int, r)
 
@@ -241,5 +285,5 @@ if __name__ == "__main__":
                 valid_splits)
     arguments.splits = splits
 
-    #make_dataset(arguments)
-    test_dataset()
+    make_dataset(arguments)
+    #test_dataset()

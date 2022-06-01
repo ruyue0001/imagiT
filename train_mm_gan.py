@@ -215,8 +215,8 @@ def make_loss_compute(model, tgt_vocab, opt):
 
 
 def train_model(model, fields, optim, data_type,
-                train_img_names, valid_img_names,
-                model_opt):
+                train_imgs_64, train_imgs_128, valid_imgs_64, valid_imgs_128,
+                train_img_names, valid_img_names, train_img_feats, valid_img_feats, model_opt):
     train_loss = make_loss_compute(model, fields["tgt"].vocab, opt)
     valid_loss = make_loss_compute(model, fields["tgt"].vocab, opt)
 
@@ -230,7 +230,7 @@ def train_model(model, fields, optim, data_type,
                            train_loss, valid_loss,
                            optim, trunc_size, shard_size, data_type,
                            norm_method, grad_accum_count,
-                           train_img_names, valid_img_names, multimodal_model_type)
+                           train_imgs_64, train_imgs_128, valid_imgs_64, valid_imgs_128, train_img_names, valid_img_names, train_img_feats, valid_img_feats,multimodal_model_type)
 
     print('\nStart training...')
     print(' * number of epochs: %d, starting from Epoch %d' %
@@ -390,22 +390,29 @@ def build_optim(model, checkpoint):
 def main():
     # start with loading the image features
     # open hdf5 file with the image features
-    train_file = tables.open_file(opt.path_to_train_img_names, mode='r')
-    valid_file = tables.open_file(opt.path_to_valid_img_names, mode='r')
-
-    # if opt.multimodal_model_type in ['src+img', 'graphtransformer', 'gantransformer']:
-    #     # load only the local image features
-    #     train_img_feats = train_file.root.local_feats[:]
-    #     valid_img_feats = valid_file.root.local_feats[:]
-    # else:
-    #     # load only the global image features
-    #     train_img_feats = train_file.root.global_feats[:]
-    #     valid_img_feats = valid_file.root.global_feats[:]
-    train_img_names = train_file.root.filename[:]
-    valid_img_names = valid_file.root.filename[:]
+    train_feats_file = tables.open_file(opt.path_to_train_img_feats, mode='r')
+    valid_feats_file = tables.open_file(opt.path_to_valid_img_feats, mode='r')
+    train_names_file = tables.open_file(opt.path_to_train_img_names, mode='r')
+    valid_names_file = tables.open_file(opt.path_to_valid_img_names, mode='r')
+    train_imgs_64 = np.load(opt.path_to_train_imgs_64, allow_pickle=True)
+    train_imgs_128 = np.load(opt.path_to_train_imgs_128, allow_pickle=True)
+    valid_imgs_64 = np.load(opt.path_to_valid_imgs_64, allow_pickle=True)
+    valid_imgs_128 = np.load(opt.path_to_valid_imgs_128, allow_pickle=True)
+    if opt.multimodal_model_type in ['src+img', 'graphtransformer', 'gantransformer']:
+        # load only the local image features
+        train_img_feats = train_feats_file.root.local_feats[:]
+        valid_img_feats = valid_feats_file.root.local_feats[:]
+    else:
+        # load only the global image features
+        train_img_feats = train_feats_file.root.global_feats[:]
+        valid_img_feats = valid_feats_file.root.global_feats[:]
+    train_img_names = train_names_file.root.filename[:]
+    valid_img_names = valid_names_file.root.filename[:]
     # close hdf5 file handlers
-    train_file.close()
-    valid_file.close()
+    train_names_file.close()
+    valid_names_file.close()
+    train_feats_file.close()
+    valid_feats_file.close()
 
     # Load checkpoint if we resume from a previous training.
     if opt.train_from:
@@ -441,7 +448,7 @@ def main():
 
     # Do training.
     train_model(model, fields, optim, data_type,
-                train_img_names, valid_img_names,
+                train_imgs_64, train_imgs_128, valid_imgs_64, valid_imgs_128, train_img_names, valid_img_names, train_img_feats, valid_img_feats,
                 model_opt)
 
 if __name__ == "__main__":

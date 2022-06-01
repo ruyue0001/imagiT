@@ -12,7 +12,7 @@ import onmt.modules
 from onmt.Models import NMTModel, MeanEncoder, RNNEncoder, \
                         StdRNNDecoder, InputFeedRNNDecoder
 from onmt.modules import Embeddings, ImageEncoder, CopyGenerator, \
-                         TransformerEncoder, mmTransformerEncoder, TransformerDecoder, mmTransformerEncoderLayer,\
+                         TransformerEncoder, mmTransformerEncoder, TransformerDecoder, mmTransformerDecoder,\
                          CNNEncoder, CNNDecoder, AudioEncoder
 from onmt.Utils import use_gpu
 
@@ -115,6 +115,10 @@ def make_decoder(opt, embeddings):
     """
     if opt.decoder_type == "transformer":
         return TransformerDecoder(opt.dec_layers, opt.rnn_size,
+                                  opt.global_attention, opt.copy_attn,
+                                  opt.dropout, embeddings)
+    if opt.decoder_type == "mmtransformer":
+        return mmTransformerDecoder(opt.dec_layers, opt.rnn_size,
                                   opt.global_attention, opt.copy_attn,
                                   opt.dropout, embeddings)
     elif opt.decoder_type == "cnn":
@@ -528,6 +532,7 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
     decoder = make_decoder(model_opt, tgt_embeddings)
 
     encoder_image = make_encoder_fake_image_local_features(model_opt)
+    #encoder_image = make_encoder_image_local_features(model_opt)
     # if model_opt.multimodal_model_type in ['src+img', 'graphtransformer']:
     #     # use the local image features "as is": encoder only reshapes them
     #     encoder_image = make_encoder_image_local_features(model_opt)
@@ -552,8 +557,8 @@ def make_base_model_mmt_gan(model_opt, fields, gpu, checkpoint=None):
     #     model = GraphTransformer(encoder, decoder, encoder_image)
 
     if model_opt.multimodal_model_type == 'gantransformer':
-        mmTransformerEncoder = mmTransformerEncoderLayer(model_opt.rnn_size, model_opt.dropout)
-        model = GANTransformer(encoder, mmTransformerEncoder, decoder, netG, netsD, cnn_model, encoder_image)
+        #mmTransformerEncoder = mmTransformerEncoderLayer(model_opt.rnn_size, model_opt.dropout)
+        model = GANTransformer(model_opt.rnn_size, model_opt.dropout, model_opt.mm_enc_layers, encoder, decoder, netG, netsD, cnn_model, encoder_image)
     else:
         raise Exception("Multi-modal model type not yet implemented: %s"%(
                         model_opt.multimodal_model_type))

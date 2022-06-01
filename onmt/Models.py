@@ -12,6 +12,62 @@ import onmt
 from onmt.Utils import aeq
 import sys
 
+class PositionwiseFeedForward(nn.Module):
+    """ A two-layer Feed-Forward-Network with residual layer norm.
+
+        Args:
+            size (int): the size of input for the first-layer of the FFN.
+            hidden_size (int): the hidden layer size of the second-layer
+                              of the FNN.
+            dropout (float): dropout probability(0-1.0).
+    """
+    def __init__(self, size, hidden_size, dropout=0.1):
+        super(PositionwiseFeedForward, self).__init__()
+        self.w_1 = onmt.modules.BottleLinear(size, hidden_size)
+        self.w_2 = onmt.modules.BottleLinear(hidden_size, size)
+        self.layer_norm = onmt.modules.BottleLayerNorm(size)
+        self.dropout_1 = nn.Dropout(dropout)
+        self.dropout_2 = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        inter = self.dropout_1(self.relu(self.w_1(self.layer_norm(x))))
+        output = self.dropout_2(self.w_2(inter))
+        return output + x
+
+class mmTransformerEncoderLayer(nn.Module):
+    """
+    A single layer of the transformer encoder.
+
+    Args:
+            size(int): the dimension of keys/values/queries in
+                       MultiHeadedAttention, also the input size of
+                       the first-layer of the PositionwiseFeedForward.
+            droput(float): dropout probability(0-1.0).
+            head_count(int): the number of head for MultiHeadedAttention.
+            hidden_size(int): the second-layer of the PositionwiseFeedForward.
+    """
+
+    def __init__(self, size, dropout,
+                 head_count=10, hidden_size=2048):
+        super(mmTransformerEncoderLayer, self).__init__()
+
+        self.self_attn = onmt.modules.MultiHeadedAttention(
+            head_count, size, dropout=dropout)
+        self.feed_forward = PositionwiseFeedForward(size,
+                                                    hidden_size,
+                                                    dropout)
+        self.layer_norm = onmt.modules.BottleLayerNorm(size)
+
+    def forward(self, input, input_mm, mask):
+        input_norm = self.layer_norm(input)
+        emb_norm = self.layer_norm(input_mm)
+        mid, attn = self.self_attn(input_norm, input_norm, emb_norm, mask=mask)
+        out = self.feed_forward(mid + input_mm)
+        # print (input_mm.shape, mid.shape, out.shape)
+        return out, attn
+
+
 class EncoderBase(nn.Module):
     """
     Base encoder class. Specifies the interface used by different encoder types
@@ -707,7 +763,8 @@ class ImageLocalFeaturesProjector(nn.Module):
         
         layers = []
         # reshape input
-        layers.append( View(-1, 4*4, nfeats) )
+        layers.append( View(-1, 7*7, nfeats) )
+        #layers.append(View(-1, 4 * 4, nfeats))
         # linear projection from feats to rnn size
         layers.append( nn.Linear(nfeats, outdim*num_layers) )
         if use_nonlinear_projection:
@@ -1564,19 +1621,22 @@ class GANTransformer(nn.Module):
       decoder (:obj:`RNNDecoderBase`): a decoder object
       multi<gpu (bool): setup for multigpu support
     """
-    def __init__(self, encoder, mmTransformerEncoder, decoder, netG, netsD, cnn_model, encoder_images, caption_cnn = None, caption_rnn = None, multigpu=False):
+    def __init__(self, hidden_size, dropout, mm_enc_layers, encoder, decoder, netG, netsD, cnn_model, encoder_images, caption_cnn = None, caption_rnn = None, multigpu=False):
         self.multigpu = multigpu
         super(GANTransformer, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.mm_encoder = mmTransformerEncoder
+        self.mm_enc_layers = mm_enc_layers
+        self.mmtransformer = nn.ModuleList(
+            [mmTransformerEncoderLayer(hidden_size, dropout)
+             for i in range(self.mm_enc_layers)])
         self.cnn_model = cnn_model
         self.encoder_images = encoder_images
         self.caption_cnn = caption_cnn
         self.caption_rnn = caption_rnn
         self.netG = netG
         self.netsD = netsD
-        self.layer_norm = onmt.modules.BottleLayerNorm(300)
+        self.layer_norm = onmt.modules.BottleLayerNorm(hidden_size)
         # self.imsize = 64 * (2 ** 2)
         # self.image_transform = transforms.Compose([
         #     transforms.Scale(int(self.imsize * 76 / 64)),
@@ -1586,7 +1646,7 @@ class GANTransformer(nn.Module):
         #     transforms.ToTensor(),
         #     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-    def forward(self, src, tgt, lengths, noise, dec_state=None):
+    def forward(self, src, tgt, lengths, noise, dec_state=None, imgs=None, img_feats=None):
         """Forward propagate a `src`, `img_feats` and `tgt` tuple for training.
         Possible initialized with a beginning decoder state.
 
@@ -1620,31 +1680,36 @@ class GANTransformer(nn.Module):
         words_embs = context.permute(1, 2, 0).contiguous()
         sent_emb = torch.mean(words_embs, dim=2)
 
-        fake_imgs, _, mu, logvar = self.netG(noise, sent_emb, words_embs, mask=None)
-
-        img1 = fake_imgs[0]
+        h_code, fake_imgs, _, mu, logvar = self.netG(noise, sent_emb, words_embs, mask=None)
+        #h_code [128,32,128,128]
+        #img1 = fake_imgs[0]
         img2 = fake_imgs[1]
         #print (img1.shape, img2.shape)
         #[128,3,64,64], [128,3,128,128]
 
-        local_features = self.cnn_model.features(img2)
-        #print (local_features.shape)
-        #[128,2048,4,4]
+        if img_feats is None:
+            local_features = self.cnn_model.features(img2)
+            #print (local_features.shape)
+            #[128,2048,4,4]
 
-        local_features = local_features.permute(0,3,2,1).reshape(-1,4*4,2048)
+            local_features = local_features.permute(0,3,2,1).reshape(-1,4*4,2048)
 
-        img_proj = self.encoder_images(local_features)
-        #print (img_proj.shape)
-        #[128,16,300]
+            img_proj = self.encoder_images(local_features)
+            #print (img_proj.shape)
+            #[128,16,300]
+        else:
+            img_proj = self.encoder_images(img_feats)
+            #print (img_proj.shape)
+            #[128,49,300]
 
         # multimodal transformer layer
         emb = context.transpose(0,1).contiguous()
         input_mm = torch.cat([emb, img_proj], dim=1)
         #print (embs.shape, input_mm.shape)
-        out_mm = input_mm
+        out = input_mm
         words = emb[:, :, 0]
         s_len = emb.shape[1]
-        out_batch, out_len, _ = out_mm.size()
+        out_batch, out_len, _ = out.size()
         w_batch, w_len = words.size()
 
         aeq(out_batch, w_batch)
@@ -1654,20 +1719,32 @@ class GANTransformer(nn.Module):
         mask = words.data.eq(padding_idx).unsqueeze(1) \
             .expand(w_batch, out_len, s_len)
 
-        out, attn = self.mm_encoder(emb, out_mm, mask)
-        mm_context = self.layer_norm(out).transpose(0, 1).contiguous()
-        #print (mm_context.shape)
+        #out, attn = self.mm_encoder(emb, out, mask)
+        for i in range(self.mm_enc_layers):
+            #print (emb.shape, out.shape, mask.shape)
+            out, attn = self.mmtransformer[i](emb, out, mask) # attn 1x49x10
+        out = self.layer_norm(out)
 
-        enc_state = self.decoder.init_decoder_state(input_mm.transpose(0, 1), mm_context, enc_hidden=None)
+        mm_context = out.transpose(0, 1).contiguous()
+        #print (mm_context.shape)
+        encoder_input_mm = Variable(input_mm.data)
+
+        enc_state = self.decoder.init_decoder_state(encoder_input_mm.transpose(0, 1), mm_context, enc_hidden=None)
         out, dec_state, attns = self.decoder(tgt, mm_context,
                                              enc_state if dec_state is None
                                              else dec_state,
                                              context_lengths=lengths)
+        # enc_state = self.decoder.init_decoder_state(input.transpose(0, 1), context, enc_hidden=None)
+        # out, dec_state, attns = self.decoder(tgt, context,
+        #                                      enc_state if dec_state is None
+        #                                      else dec_state,
+        #                                      context_lengths=lengths)
         if self.multigpu:
             # Not yet supported on multi-gpu
             dec_state = None
             attns = None
-        return context, mu, logvar, fake_imgs, out, attns, dec_state
+        #return context, mu, logvar, fake_imgs, out, attns, dec_state
+        return context, None, None, None, out, attns, dec_state
 
 
 class RNNDecoderStateDoublyAttentive(DecoderState):

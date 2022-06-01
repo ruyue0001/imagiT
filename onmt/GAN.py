@@ -320,7 +320,11 @@ class INIT_STAGE_G(nn.Module):
         :param c_code: batch x cfg.TEXT.EMBEDDING_DIM
         :return: batch x ngf/16 x 64 x 64
         """
-        c_z_code = torch.cat((c_code, z_code), 1)
+        try:
+            c_z_code = torch.cat((c_code, z_code), 1)
+        except Exception as e:
+            print (c_code.shape, z_code.shape)
+            raise e
         # state size ngf x 4 x 4
         out_code = self.fc(c_z_code)
         out_code = out_code.view(-1, self.gf_dim, 4, 4)
@@ -512,7 +516,7 @@ class G_NET(nn.Module):
             if att2 is not None:
                 att_maps.append(att2)
 
-        return fake_imgs, att_maps, mu, logvar
+        return h_code2, fake_imgs, att_maps, mu, logvar
 
 # class G_DCGAN(nn.Module):
 #     def __init__(self):

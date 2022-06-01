@@ -345,7 +345,7 @@ class TrainerMultimodalGAN(object):
     def __init__(self, model, train_loss, valid_loss, optim,
                  trunc_size=0, shard_size=32, data_type='text',
                  norm_method="sents", grad_accum_count=1,
-                 train_img_names=None, valid_img_names=None,
+                 train_imgs_64=None, train_imgs_128=None, valid_imgs_64=None, valid_imgs_128=None, train_img_names=None, valid_imgs_names=None, train_img_feats=None, valid_img_feats=None,
                  multimodal_model_type=None):
         # Basic attributes.
         self.model = model
@@ -357,8 +357,15 @@ class TrainerMultimodalGAN(object):
         self.data_type = data_type
         self.norm_method = norm_method
         self.grad_accum_count = grad_accum_count
+        self.train_imgs_64 = train_imgs_64
+        self.train_imgs_128 = train_imgs_128
+        self.valid_imgs_64 = valid_imgs_64
+        self.valid_imgs_128 = valid_imgs_128
         self.train_img_names = train_img_names
-        self.valid_img_names = valid_img_names
+        self.valid_img_names = valid_imgs_names
+        self.train_img_feats = train_img_feats
+        self.valid_img_feats = valid_img_feats
+
         self.multimodal_model_type = multimodal_model_type
         self.imsize = 64 * (2 ** 2)
         self.image_transform = transforms.Compose([
@@ -369,10 +376,10 @@ class TrainerMultimodalGAN(object):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-        assert(not self.train_img_names is None), \
-                'Must provide training image names!'
-        assert(not self.valid_img_names is None), \
-                'Must provide validation image names!'
+        assert(not self.train_imgs_64 is None), \
+                'Must provide training images!'
+        assert(not self.valid_imgs_64 is None), \
+                'Must provide validation images!'
         assert(self.multimodal_model_type in ['imgw', 'imge', 'imgd', 'src+img', 'graphtransformer', 'gantransformer']), \
                 'Invalid multimodal model type: %s!'%(self.multimodal_model_type)
 
@@ -546,28 +553,16 @@ class TrainerMultimodalGAN(object):
             # print('111')
             idxs = batch.indices.cpu().data.numpy()
             # load image features for this minibatch into a pytorch Variable
-            img_names = self.train_img_names[idxs]
-            #print (img_names)
+            imgs_64 = self.train_imgs_64[idxs]
+            imgs_128 = self.train_imgs_128[idxs]
             imgs = []
-            tmp_64 = []
-            tmp_128 = []
-            for name in img_names:
-                img = Image.open(name).convert('RGB')
-                img = self.image_transform(img)
-                re_img_64 = transforms.Scale(64)(img)
-                re_img_128 = transforms.Scale(128)(img)
-                re_norm_img_64 = self.norm(re_img_64)
-                re_norm_img_128 = self.norm(re_img_128)
-                re_norm_img_64 = re_norm_img_64.unsqueeze(0)
-                re_norm_img_128 = re_norm_img_128.unsqueeze(0)
-                tmp_64.append(re_norm_img_64)
-                tmp_128.append(re_norm_img_128)
-            tmp_64 = torch.cat(tmp_64, dim=0)
-            tmp_64 = tmp_64.cuda()
-            imgs.append(tmp_64)
-            tmp_128 = torch.cat(tmp_128, dim=0)
-            tmp_128 = tmp_128.cuda()
-            imgs.append(tmp_128)
+            imgs.append(torch.cat([torch.from_numpy(i) for i in imgs_64],dim=0).cuda())
+            imgs.append(torch.cat([torch.from_numpy(i) for i in imgs_128], dim=0).cuda())
+
+
+            # img_feats = torch.from_numpy(self.train_img_feats[idxs])
+            # img_feats = torch.autograd.Variable(img_feats, requires_grad=False)
+            # img_feats = img_feats.cuda()
 
             target_size = batch.tgt.size(0)
             # Truncated BPTT
@@ -593,7 +588,7 @@ class TrainerMultimodalGAN(object):
                 # 2. F-prop all but generator.
                 if self.multimodal_model_type == 'gantransformer':
                     #src [length, batch_size, 1]
-                    batch_size = 128
+                    batch_size = len(idxs)
                     nz = 100
                     noise = Variable(torch.FloatTensor(batch_size, nz))
                     fixed_noise = Variable(torch.FloatTensor(batch_size, nz).normal_(0, 1))
@@ -602,7 +597,7 @@ class TrainerMultimodalGAN(object):
 
                     self.model.netG.zero_grad()
 
-                    context, mu, logvar, fake_imgs, outputs, attns, dec_state = self.model(src, tgt, src_lengths, noise, dec_state)
+                    context, mu, logvar, fake_imgs, outputs, attns, dec_state = self.model(src, tgt, src_lengths, noise, dec_state, imgs=None, img_feats=None)
 
                     context_ = context.detach()
                 else:
@@ -636,7 +631,7 @@ class TrainerMultimodalGAN(object):
                     #print (words_embs.shape, sent_emb.shape)
 
                     # noise.data.normal_(0, 1)
-                    fake_imgs, _, mu, logvar = self.model.netG(noise, sent_emb, words_embs, mask=None)
+                    h_code, fake_imgs, _, mu, logvar = self.model.netG(noise, sent_emb, words_embs, mask=None)
                     #print (fake_imgs[0].shape)  #[128, 3, 64, 64]
 
                     #update netD

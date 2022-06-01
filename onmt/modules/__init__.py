@@ -8,7 +8,7 @@ from onmt.modules.AudioEncoder import AudioEncoder
 from onmt.modules.CopyGenerator import CopyGenerator, CopyGeneratorLossCompute
 from onmt.modules.StructuredAttention import MatrixTree
 from onmt.modules.Transformer import \
-   TransformerEncoder, mmTransformerEncoder,mmTransformerEncoderLayer, TransformerDecoder, PositionwiseFeedForward
+   TransformerEncoder, TransformerEncoderLayer, mmTransformerEncoder, mmTransformerEncoderLayer, TransformerDecoder, TransformerDecoderLayer, mmTransformerDecoder, mmTransformerDecoderLayer, PositionwiseFeedForward
 from onmt.modules.Conv2Conv import CNNEncoder, CNNDecoder
 from onmt.modules.MultiHeadedAttn import MultiHeadedAttention
 from onmt.modules.StackedRNN import StackedLSTM, StackedGRU

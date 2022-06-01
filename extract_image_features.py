@@ -67,8 +67,8 @@ def get_cnn_features(image_list, split, batch_size, dataset_name, pretrained_cnn
         # forward pass using pre-trained CNN, twice for each minibatch
         lfeats = pretrained_cnn.get_local_features(input_imgs_minibatch)
         gfeats = pretrained_cnn.get_global_features(input_imgs_minibatch)
-        print("lfeats.size(): ", lfeats.size())
-        print ("gfeats.size(): ", gfeats.size())
+        # print("lfeats.size(): ", lfeats.size())
+        # print ("gfeats.size(): ", gfeats.size())
 
         # transpose and flatten feats to prepare for reshape
         lfeats = np.array(list(map(lambda x: x.T.flatten(), lfeats.data.cpu().numpy())))

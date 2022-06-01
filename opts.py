@@ -56,7 +56,7 @@ def model_opts(parser):
                        are experimental. Options are
                        [rnn|brnn|mean|transformer|cnn].""")
     group.add_argument('-decoder_type', type=str, default='rnn',
-                       choices=['rnn', 'transformer', 'cnn', 'doubly-attentive-rnn'],
+                       choices=['rnn', 'transformer', 'mmtransformer', 'cnn', 'doubly-attentive-rnn'],
                        help="""Type of decoder layer to use. Non-RNN layers
                        are experimental. Options are
                        [rnn|transformer|cnn|doubly-attentive-rnn].""")
@@ -67,6 +67,8 @@ def model_opts(parser):
                        help='Number of layers in the encoder')
     group.add_argument('-dec_layers', type=int, default=2,
                        help='Number of layers in the decoder')
+    group.add_argument('-mm_enc_layers', type=int, default=6,
+                       help='Number of layers in the mm encoder')
     group.add_argument('-rnn_size', type=int, default=300,
                        help='Size of rnn hidden states')
     group.add_argument('-cnn_kernel_width', type=int, default=3,
@@ -472,6 +474,14 @@ def train_mm_opts(parser):
                         help="""path to train img names""")
     parser.add_argument('-path_to_valid_img_names', default='flickr30k_valid_image_name.hdf5',
                         help="""path to valid img names""")
+    parser.add_argument('-path_to_train_imgs_64', default='flickr30k_train_images_64.npy',
+                        help="""path to train imgs 64""")
+    parser.add_argument('-path_to_train_imgs_128', default='flickr30k_train_images_128.npy',
+                        help="""path to train imgs 128""")
+    parser.add_argument('-path_to_valid_imgs_64', default='flickr30k_valid_images_64.npy',
+                        help="""path to valid imgs 64""")
+    parser.add_argument('-path_to_valid_imgs_128', default='flickr30k_valid_images_128.npy',
+                        help="""path to valid imgs 128""")
     parser.add_argument('-dropout_imgs', type=float, default=0.5,
                         help="Dropout probability applied to image features.")
     parser.add_argument('-use_nonlinear_projection', action='store_true',
